@@ -11,25 +11,34 @@ def preprocessar_imagem(caminho_imagem):
         if img is None:
             raise ValueError(f"Não foi possível carregar a imagem: {caminho_imagem}")
         
-        # Redimensionar para tamanho padrão
-        img = cv2.resize(img, (300, 300))
+        # Redimensionar para tamanho padrão (mantém proporção se possível)
+        img = cv2.resize(img, (300, 300), interpolation=cv2.INTER_AREA)
         
-        # Aplicar filtro gaussiano para reduzir ruído
-        img = cv2.GaussianBlur(img, (3, 3), 0)
+        # Normalização básica
+        img = img.astype(np.float32)
+        
+        # Aplicar filtro gaussiano para reduzir ruído (ajustado para melhor preservação)
+        img = cv2.GaussianBlur(img, (5, 5), 1.5)
         
         # Melhorar o contraste usando CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        img = clahe.apply(img)
+        # Parâmetros otimizados para impressões digitais
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        img = clahe.apply(img.astype(np.uint8))
         
-        # Binarização usando Otsu
-        _, binaria = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # Normalização final para melhorar extração de características
+        # Usar equalização adaptativa adicional
+        img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
         
-        # Operações morfológicas para limpar a imagem
-        kernel = np.ones((2,2), np.uint8)
-        binaria = cv2.morphologyEx(binaria, cv2.MORPH_CLOSE, kernel)
-        binaria = cv2.morphologyEx(binaria, cv2.MORPH_OPEN, kernel)
+        # Filtro de aguçamento leve para realçar cristas
+        kernel_sharpen = np.array([[-1, -1, -1],
+                                   [-1,  9, -1],
+                                   [-1, -1, -1]]) * 0.1
+        img = cv2.filter2D(img, -1, kernel_sharpen)
         
-        return binaria
+        # Normalização final
+        img = np.clip(img, 0, 255).astype(np.uint8)
+        
+        return img
         
     except Exception as e:
         print(f"Erro no pré-processamento: {e}")
