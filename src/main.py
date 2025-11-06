@@ -7,6 +7,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from carregar_dataset import baixar_e_listar_imagens
 from src.autenticacao import autenticar
+from src.db import init_db, criar_usuario, listar_usuarios, consultar_propriedades_por_nivel, registrar_log
 
 def main():
     """
@@ -16,39 +17,44 @@ def main():
     print("=" * 50)
     
     try:
-        # Baixar dataset e obter imagens
+        print(" Inicializando banco de dados...")
+        init_db(seed=True)
+
         print(" Baixando dataset do Kaggle...")
         imagens = baixar_e_listar_imagens()
-        
         if len(imagens) < 2:
-            print(" Dataset insuficiente para comparação.")
+            print(" Dataset insuficiente para operação.")
             return
-        
+
         print(f"\n Dataset carregado com {len(imagens)} imagens")
-        
-        # Menu de opções
+
+        sessao = {"usuario": None}
+
         while True:
-            print("\n" + "=" * 50)
-            print(" MENU DE OPÇÕES:")
-            print("1. Teste automático (comparar duas imagens aleatórias)")
-            print("2. Teste manual (escolher imagens específicas)")
-            print("3. Teste de múltiplas comparações")
-            print("4. Sair")
-            
-            opcao = input("\nEscolha uma opção (1-4): ").strip()
-            
+            print("\n" + "=" * 60)
+            print(" MENU PRINCIPAL:")
+            print("1. Cadastrar usuário (matrícula biométrica)")
+            print("2. Login biométrico")
+            print("3. Consultar dados (acesso por nível)")
+            print("4. Listar usuários cadastrados")
+            print("5. Sair")
+
+            opcao = input("\nEscolha uma opção (1-5): ").strip()
+
             if opcao == "1":
-                teste_automatico(imagens)
+                cadastrar_usuario(imagens)
             elif opcao == "2":
-                teste_manual(imagens)
+                sessao["usuario"] = login_biometrico(imagens)
             elif opcao == "3":
-                teste_multiplas_comparacoes(imagens)
+                consultar_dados(sessao)
             elif opcao == "4":
+                mostrar_usuarios()
+            elif opcao == "5":
                 print(" Encerrando sistema...")
                 break
             else:
                 print(" Opção inválida. Tente novamente.")
-                
+
     except Exception as e:
         print(f"Erro no sistema: {e}")
 
@@ -122,6 +128,144 @@ def teste_multiplas_comparacoes(imagens):
     print(f"   Total de testes: {num_testes}")
     print(f"   Autenticações bem-sucedidas: {autenticados}")
     print(f"   Taxa de autenticação: {taxa_autenticacao:.1f}%")
+
+
+def mostrar_imagens_disponiveis(imagens, limite=10):
+    print("Imagens disponíveis (primeiras {}):".format(limite))
+    for i, img in enumerate(imagens[:limite]):
+        print(f"   {i+1}. {img.split('/')[-1]}")
+
+
+def cadastrar_usuario(imagens):
+    print("\n CADASTRAR USUÁRIO")
+    print("-" * 30)
+
+    nome = input("Nome do usuário: ").strip()
+    try:
+        nivel = int(input("Nível de acesso (1=Todos, 2=Diretores, 3=Ministro): ").strip())
+    except ValueError:
+        print(" Nível inválido.")
+        return
+
+    if nivel not in (1, 2, 3):
+        print(" Nível deve ser 1, 2 ou 3.")
+        return
+
+    print("")
+    mostrar_imagens_disponiveis(imagens)
+    try:
+        idx = int(input("Escolha a imagem para registrar (1-10) ou 0 para caminho manual: ").strip())
+    except ValueError:
+        print(" Entrada inválida.")
+        return
+
+    if idx == 0:
+        caminho = input("Caminho completo da imagem: ").strip()
+    else:
+        if 1 <= idx <= min(10, len(imagens)):
+            caminho = imagens[idx - 1]
+        else:
+            print(" Índice inválido.")
+            return
+
+    if not os.path.exists(caminho):
+        print(" Arquivo não encontrado.")
+        return
+
+    user_id = criar_usuario(nome, nivel, caminho)
+    registrar_log(user_id, "cadastro_usuario", True)
+    print(f" Usuário cadastrado com ID {user_id} e nível {nivel}.")
+
+
+def login_biometrico(imagens):
+    print("\n LOGIN BIOMÉTRICO")
+    print("-" * 30)
+
+    usuarios = listar_usuarios()
+    if len(usuarios) == 0:
+        print(" Nenhum usuário cadastrado. Cadastre primeiro.")
+        return None
+
+    print("Usuários:")
+    for u in usuarios:
+        print(f"   {u['id']}. {u['nome']} (nível {u['nivel']})")
+
+    try:
+        uid = int(input("Escolha o ID do usuário para autenticar: ").strip())
+    except ValueError:
+        print(" Entrada inválida.")
+        return None
+
+    selecionado = None
+    for u in usuarios:
+        if u["id"] == uid:
+            selecionado = u
+            break
+
+    if selecionado is None:
+        print(" Usuário não encontrado.")
+        return None
+
+    print("")
+    mostrar_imagens_disponiveis(imagens)
+    try:
+        idx = int(input("Escolha a imagem de teste (1-10) ou 0 para caminho manual: ").strip())
+    except ValueError:
+        print(" Entrada inválida.")
+        return None
+
+    if idx == 0:
+        img_teste = input("Caminho completo da imagem de teste: ").strip()
+    else:
+        if 1 <= idx <= min(10, len(imagens)):
+            img_teste = imagens[idx - 1]
+        else:
+            print(" Índice inválido.")
+            return None
+
+    if not os.path.exists(img_teste):
+        print(" Arquivo de teste não encontrado.")
+        return None
+
+    ok = autenticar(selecionado["imagem_registrada"], img_teste, limiar=60)
+    registrar_log(selecionado["id"], "login", ok)
+    if ok:
+        print(f" Login bem-sucedido. Bem-vindo, {selecionado['nome']} (nível {selecionado['nivel']}).")
+        return selecionado
+    else:
+        print(" Falha na autenticação biométrica.")
+        return None
+
+
+def consultar_dados(sessao):
+    print("\n CONSULTAR DADOS")
+    print("-" * 30)
+    if not sessao.get("usuario"):
+        print(" É necessário estar logado para consultar dados.")
+        return
+
+    nivel = sessao["usuario"]["nivel"]
+    linhas = consultar_propriedades_por_nivel(nivel)
+    if len(linhas) == 0:
+        print(" Nenhum dado disponível para seu nível de acesso.")
+        return
+
+    print(f" Dados disponíveis para nível {nivel}:")
+    for r in linhas:
+        print(
+            f" - [{r['nivel_minimo']}] {r['nome']} | {r['localizacao']} | Agrotóxicos: {r['agrotoxicos_proibidos']} | Impacto: {r['impacto']}"
+        )
+
+
+def mostrar_usuarios():
+    print("\n USUÁRIOS CADASTRADOS")
+    print("-" * 30)
+    usuarios = listar_usuarios()
+    if len(usuarios) == 0:
+        print(" Nenhum usuário cadastrado.")
+        return
+    for u in usuarios:
+        print(f" - ID {u['id']}: {u['nome']} (nível {u['nivel']}) [img: {os.path.basename(u['imagem_registrada'])}]")
 
 if __name__ == "__main__":
     main()
